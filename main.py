@@ -16,6 +16,10 @@ Opponent = -1  # on the opponent's side of the board
 InHand = 0  # on the player's side of the board
 Mine = 1  # on the opponent's side of the board
 
+Creature = 0
+GreenItem = 1
+RedItem = 2
+BlueItem = 3
 
 class Card:
     def __init__(self):
@@ -69,7 +73,8 @@ class ActionType(Enum):
     Pass = "Pass",
     Summon = "Summon",
     Attack = "Attack",
-    Pick = "Pick"
+    Pick = "Pick",
+    Use = "Use"
 
 
 class Action:
@@ -96,6 +101,11 @@ class Action:
         self.type = ActionType.Pick
         self.id = id
 
+    def use(self, id, idTarget):
+        self.type = ActionType.Use
+        self.id = id
+        self.idTarget = idTarget
+
     def print(self, ending="; "):
         if self.type == ActionType.Pass:
             print("PASS")
@@ -104,7 +114,9 @@ class Action:
         elif self.type == ActionType.Attack:
             print("ATTACK {0} {1}".format(self.id, self.idTarget), end=ending)
         elif self.type == ActionType.Pick:
-            print("Pick {}".format(self.id), end=ending)
+            print("PICK {}".format(self.id), end=ending)
+        elif self.type == ActionType.Use:
+            print("USE {0} {1}".format(self.id, self.idTarget), end=ending)
         else:
             log("Action not found: {}".format(self.type))
             trap()
@@ -115,6 +127,13 @@ class Turn:
 
     def __init__(self):
         self.actions = []
+
+    def isCardPlayed(self, id):
+        for action in self.actions:
+            if not (action.type == ActionType.Summon or action.type == ActionType.Use): continue
+            if action.id == id:
+                return True
+        return False
 
     def clear(self):
         self.actions.clear()
@@ -206,8 +225,6 @@ class Agent:
 
     def think(self):
         """ The Core part """
-        self.bestTurn.clear()  # clear the bestTurn
-
         # Draft phase
 
         if self.state.isInDraft():
@@ -215,45 +232,70 @@ class Agent:
             return  # Todo: apply a pick strategy
 
         # Battle phase
-        # log("Battle phase")
-        # strategy:
-        # Summon: summon the largest possible one
-        # Attack: only attack the enemy
+        log("Battle phase")
+
+        """ Battle preparation """
+
+        my_creatures = []
+        enemy_creatures = []
+
+        def prepare():
+            for card in self.state.cards:
+                if card.location == Mine:
+                    my_creatures.append(card)
+                elif card.location == Opponent:
+                    enemy_creatures.append(card)
+
         def think_summon():
-            """
-            Summon strategy: iterate through the cards in hand and summon the largest possible one
-            """
-            bestCard = None
-            bestScore = -float('inf')
+            log("Summon phase")
 
             my_mana = self.state.players[0].mana
-            # log("Mana: {}".format(my_mana))
-            for card in self.state.cards:
-                # log("card id: {0}, cost: {1}, location: {2}".format(card.id, card.cost, card.location))
-                if card.location != InHand:
-                    continue
-                if card.cost > my_mana:
-                    continue
-                score = card.cost  # grade the cards scores directly based on its cost
-                if score > bestScore:
-                    bestScore = score
-                    bestCard = card
+            while my_mana > 0:
+                bestCard = None
+                bestScore = -float('inf')
+                for card in self.state.cards:
+                    if card.location != InHand:
+                        continue
+                    if card.cost > my_mana:
+                        continue
+                    if card.cardType != Creature:  # summon only creatures
+                        continue
+                    if card.cardType == GreenItem and len(my_creatures) == 0:
+                        continue
+                    if card.cardType == RedItem and len(enemy_creatures) == 0:
+                        continue
+                    if self.bestTurn.isCardPlayed(card.id): continue
 
-            if bestCard is not None:  # if have a card to play
-                # log("Found Best Card id: {}".format(bestCard.id))
-                action = Action()
-                action.summon(id=bestCard.id)
-                self.bestTurn.actions.append(action)
+                    score = card.cost  # grade the cards scores directly based on its cost
+                    if score > bestScore:
+                        bestScore = score
+                        bestCard = card
+
+                if bestCard is None:
+                    break
+                else:
+                    action = Action()
+                    if bestCard.cardType == Creature:
+                        action.summon(id=bestCard.id)
+                    elif bestCard.cardType == GreenItem:
+                        targetCard = my_creatures[0]
+                        action.use(id=bestCard.id, idTarget=targetCard.id)
+                    elif bestCard.cardType == RedItem:
+                        targetCard = enemy_creatures[0]
+                        action.use(id=bestCard.id, idTarget=targetCard.id)
+                    elif bestCard.cardType == BlueItem:
+                        action.use(id=bestCard.id, idTarget=-1)
+                    self.bestTurn.actions.append(action)
+                    my_mana = my_mana - bestCard.cost
 
         def think_attack():
-
+            log("Attack phase")
             # Get all opponent's cards with Guard
             guards = []
             for card in self.state.cards:
                 if card.location != Opponent: continue
                 if not card.guard: continue
                 guards.append(card)
-            log(guards)
 
             for card in self.state.cards:
                 if card.location != Mine: continue
@@ -273,6 +315,8 @@ class Agent:
 
                 self.bestTurn.actions.append(action)
 
+        self.bestTurn.clear()
+        prepare()
         think_summon()
         think_attack()
 
