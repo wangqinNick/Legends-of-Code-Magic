@@ -12,8 +12,8 @@ def trap():
     exit(1)
 
 
-Opponent = -1,  # on the opponent's side of the board
-InHand = 0,  # on the player's side of the board
+Opponent = -1  # on the opponent's side of the board
+InHand = 0  # on the player's side of the board
 Mine = 1  # on the opponent's side of the board
 
 
@@ -84,7 +84,7 @@ class Action:
         self.type = ActionType.Summon
         self.id = id
 
-    def attack(self, id, idTarget):
+    def attack(self, id, idTarget=-1):
         self.type = ActionType.Attack
         self.id = id
         self.idTarget = idTarget
@@ -93,15 +93,15 @@ class Action:
         self.type = ActionType.Pick
         self.id = id
 
-    def print(self):
+    def print(self, ending="; "):
         if self.type == ActionType.Pass:
             print("PASS")
         elif self.type == ActionType.Summon:
-            print("SUMMON {}".format(self.id))
+            print("SUMMON {}".format(self.id), end=ending)
         elif self.type == ActionType.Attack:
-            print("ATTACK {0} {1}".format(self.id, self.idTarget))
+            print("ATTACK {0} {1}".format(self.id, self.idTarget), end=ending)
         elif self.type == ActionType.Pick:
-            print("Pick {}".format(self.id))
+            print("Pick {}".format(self.id), end=ending)
         else:
             log("Action not found: {}".format(self.type))
             trap()
@@ -121,8 +121,11 @@ class Turn:
             print("PASS")
             return
 
-        for action in self.actions:
-            action.print()
+        for i in range(len(self.actions)):
+            if i == len(self.actions) - 1:
+                self.actions[i].print(ending='\n')
+            else:
+                self.actions[i].print()
 
 
 class Agent:
@@ -156,7 +159,7 @@ class Agent:
             card_number_and_action = input()
             self.state.card_number_and_action_list.append(card_number_and_action)
 
-        """ read card info """
+        """ read cards info """
         self.state.cards = []  # clear the card list every turn
         card_count = int(input())
         # read every card
@@ -203,30 +206,43 @@ class Agent:
         # Battle phase
         # log("Battle phase")
         # strategy:
-        # Summon strategy: iterate through the cards in hand and summon the largest possible one
-        bestCard = None
-        bestScore = -float('inf')
+        # Summon: summon the largest possible one
+        # Attack: only attack the enemy
+        def think_summon():
+            """
+            Summon strategy: iterate through the cards in hand and summon the largest possible one
+            """
+            bestCard = None
+            bestScore = -float('inf')
 
-        my_mana = self.state.players[0].mana
-        # log("Mana: {}".format(my_mana))
-        for card in self.state.cards:
-            # log("card id: {0}, cost: {1}, location: {2}".format(card.id, card.cost, card.location))
-            if card.location != 0:
-                continue
-            if card.cost > my_mana:
-                continue
-            score = card.cost  # grade the cards scores directly based on its cost
-            if score > bestScore:
-                bestScore = score
-                bestCard = card
+            my_mana = self.state.players[0].mana
+            # log("Mana: {}".format(my_mana))
+            for card in self.state.cards:
+                # log("card id: {0}, cost: {1}, location: {2}".format(card.id, card.cost, card.location))
+                if card.location != InHand:
+                    continue
+                if card.cost > my_mana:
+                    continue
+                score = card.cost  # grade the cards scores directly based on its cost
+                if score > bestScore:
+                    bestScore = score
+                    bestCard = card
 
-        if bestCard is not None:  # if have a card to play
-            # log("Found Best Card id: {}".format(bestCard.id))
-            action = Action()
-            action.summon(id=bestCard.id)
-            self.bestTurn.actions.append(action)
-        else:
-            pass
+            if bestCard is not None:  # if have a card to play
+                # log("Found Best Card id: {}".format(bestCard.id))
+                action = Action()
+                action.summon(id=bestCard.id)
+                self.bestTurn.actions.append(action)
+
+        def think_attack():
+            for card in self.state.cards:
+                if card.location != Mine: continue
+                action = Action()
+                action.attack(id=card.id)
+                self.bestTurn.actions.append(action)
+
+        think_summon()
+        think_attack()
 
 
 if __name__ == '__main__':
