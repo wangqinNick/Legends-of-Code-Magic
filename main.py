@@ -7,14 +7,20 @@ from enum import Enum
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
+
 def trap():
     exit(1)
 
 
+Opponent = -1,  # on the opponent's side of the board
+InHand = 0,  # on the player's side of the board
+Mine = 1  # on the opponent's side of the board
+
+
 class Card:
     def __init__(self):
-        self.id = None
-        self.cardId = None
+        self.id = None  # the identifier of a card
+        self.cardId = None  # the identifier representing the instance of the card (there can be multiple instances of the same card in a game).
         self.location = None  # 0: in the player's hand, 1: on the player's side of the board, -1: on the opponent's side of the board
         self.cardType = None
         self.cost = None
@@ -24,6 +30,14 @@ class Card:
         self.hpChangeEnemy = None
         self.cardDraw = None
         self.abilities = None
+
+
+'''
+class CardLocation(Enum):
+    Opponent = -1,  # on the opponent's side of the board
+    InHand = 0,  # on the player's side of the board
+    Mine = 1  # on the opponent's side of the board
+'''
 
 
 class Player:
@@ -43,11 +57,17 @@ class State:
         self.opponent_actions = None
         self.card_number_and_action_list = None
 
+    def isInDraft(self):
+        return self.players[0].mana == 0
+
+
 class ActionType(Enum):
+    """ Consists all available action types"""
     Pass = "Pass",
     Summon = "Summon",
     Attack = "Attack",
     Pick = "Pick"
+
 
 class Action:
     def __init__(self):
@@ -56,6 +76,7 @@ class Action:
         self.idTarget = -1
 
     """ helper functions """
+
     def pass_(self):
         self.type = ActionType.Pass
 
@@ -72,23 +93,28 @@ class Action:
         self.type = ActionType.Pick
         self.id = id
 
-    def print(self, endWith="; "):
+    def print(self):
         if self.type == ActionType.Pass:
-            print("PASS", end="")
+            print("PASS")
         elif self.type == ActionType.Summon:
-            print("SUMMON {}".format(self.id), end="")
+            print("SUMMON {}".format(self.id))
         elif self.type == ActionType.Attack:
-            print("ATTACK {0} {1}".format(self.id, self.idTarget), end="")
+            print("ATTACK {0} {1}".format(self.id, self.idTarget))
         elif self.type == ActionType.Pick:
-            print("Pick {}".format(self.id), end="")
+            print("Pick {}".format(self.id))
         else:
             log("Action not found: {}".format(self.type))
             trap()
 
+
 class Turn:
-    """ Represents all actions to do in one turn """
+    """ Consists all actions to do in one turn """
+
     def __init__(self):
         self.actions = []
+
+    def clear(self):
+        self.actions.clear()
 
     def print(self):
         if len(self.actions) == 0:
@@ -96,10 +122,8 @@ class Turn:
             return
 
         for action in self.actions:
-            if action == self.actions[-1]:
-                action.print(endWith='\n')
-            else:
-                action.print()
+            action.print()
+
 
 class Agent:
     def __init__(self):
@@ -166,9 +190,48 @@ class Agent:
 
             self.state.cards.append(card)
 
+    def think(self):
+        """ The Core part """
+        self.bestTurn.clear()  # clear the bestTurn
+
+        # Draft phase
+
+        if self.state.isInDraft():
+            # log("Draft phase")
+            return  # Todo: apply a pick strategy
+
+        # Battle phase
+        # log("Battle phase")
+        # strategy:
+        # Summon strategy: iterate through the cards in hand and summon the largest possible one
+        bestCard = None
+        bestScore = -float('inf')
+
+        my_mana = self.state.players[0].mana
+        # log("Mana: {}".format(my_mana))
+        for card in self.state.cards:
+            # log("card id: {0}, cost: {1}, location: {2}".format(card.id, card.cost, card.location))
+            if card.location != 0:
+                continue
+            if card.cost > my_mana:
+                continue
+            score = card.cost  # grade the cards scores directly based on its cost
+            if score > bestScore:
+                bestScore = score
+                bestCard = card
+
+        if bestCard is not None:  # if have a card to play
+            # log("Found Best Card id: {}".format(bestCard.id))
+            action = Action()
+            action.summon(id=bestCard.id)
+            self.bestTurn.actions.append(action)
+        else:
+            pass
+
 
 if __name__ == '__main__':
     agent = Agent()
     while True:
         agent.read()
+        agent.think()
         agent.print()
