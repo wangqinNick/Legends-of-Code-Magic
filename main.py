@@ -16,9 +16,6 @@ Opponent = -1  # on the opponent's side of the board
 InHand = 0  # on the player's side of the board
 Mine = 1  # on the opponent's side of the board
 
-Breakthrough = 'B'
-Charge = 'C'
-Guard = 'G'
 
 class Card:
     def __init__(self):
@@ -201,9 +198,9 @@ class Agent:
 
             # abilities: 'BCG---'
             for c in abilities:
-                if c == Breakthrough: card.breakthrough = True
-                if c == Charge: card.charge = True
-                if c == Guard: card.charge = True
+                if c == 'B': card.breakthrough = True
+                if c == 'C': card.charge = True
+                if c == 'G': card.guard = True
 
             self.state.cards.append(card)
 
@@ -249,10 +246,31 @@ class Agent:
                 self.bestTurn.actions.append(action)
 
         def think_attack():
+
+            # Get all opponent's cards with Guard
+            guards = []
+            for card in self.state.cards:
+                if card.location != Opponent: continue
+                if not card.guard: continue
+                guards.append(card)
+            log(guards)
+
             for card in self.state.cards:
                 if card.location != Mine: continue
+                # Attack the guards first
                 action = Action()
-                action.attack(id=card.id)
+                if len(guards) == 0:
+                    action.attack(id=card.id)
+                else:
+                    # Attack the first guard
+                    guard = guards[0]
+                    # Make the Attack
+                    action.attack(id=card.id, idTarget=guard.id)
+                    # Calculate the guard's defense after attacking
+                    guard.defense = guard.defense - card.attack
+                    if guard.defense < 0:
+                        guards.remove(guard)
+
                 self.bestTurn.actions.append(action)
 
         think_summon()
