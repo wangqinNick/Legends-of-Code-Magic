@@ -16,6 +16,9 @@ Opponent = -1  # on the opponent's side of the board
 InHand = 0  # on the player's side of the board
 Mine = 1  # on the opponent's side of the board
 
+Breakthrough = 'B'
+Charge = 'C'
+Guard = 'G'
 
 class Card:
     def __init__(self):
@@ -30,6 +33,9 @@ class Card:
         self.hpChangeEnemy = None
         self.cardDraw = None
         self.abilities = None
+        self.breakthrough = False
+        self.charge = False
+        self.guard = False
 
 
 '''
@@ -174,7 +180,9 @@ class Agent:
             cost = int(inputs[4])
             attack = int(inputs[5])
             defense = int(inputs[6])
-            abilities = inputs[7]
+            abilities = inputs[
+                7]  # the abilities of a card. Each letter representing an ability (B for Breakthrough, C for Charge and G for Guard)
+            # log("Abilities: {}".format(abilities))
             my_health_change = int(inputs[8])
             opponent_health_change = int(inputs[9])
             card_draw = int(inputs[10])
@@ -190,6 +198,12 @@ class Agent:
             card.hpChange = my_health_change
             card.hpChangeEnemy = opponent_health_change
             card.cardDraw = card_draw
+
+            # abilities: 'BCG---'
+            for c in abilities:
+                if c == Breakthrough: card.breakthrough = True
+                if c == Charge: card.charge = True
+                if c == Guard: card.charge = True
 
             self.state.cards.append(card)
 
