@@ -21,6 +21,9 @@ GreenItem = 1
 RedItem = 2
 BlueItem = 3
 
+MAX_MANA = 12
+
+
 class Card:
     def __init__(self):
         self.id = None  # the identifier of a card
@@ -128,6 +131,9 @@ class Turn:
     def __init__(self):
         self.actions = []
 
+    def newAction(self):
+        self.actions = []
+
     def isCardPlayed(self, id):
         for action in self.actions:
             if not (action.type == ActionType.Summon or action.type == ActionType.Use): continue
@@ -154,6 +160,9 @@ class Agent:
     def __init__(self):
         self.state = State()
         self.bestTurn = Turn()  # best turn actions found
+        self.drafted_cards = []
+        self.my_creatures = []
+        self.enemy_creatures = []
 
     def print(self):
         """
@@ -225,30 +234,29 @@ class Agent:
 
     def think(self):
         """ The Core part """
-        # Draft phase
 
-        if self.state.isInDraft():
-            # log("Draft phase")
-            return  # Todo: apply a pick strategy
+        # my_creatures = []
+        # enemy_creatures = []
 
-        # Battle phase
-        log("Battle phase")
-
-        """ Battle preparation """
-
-        my_creatures = []
-        enemy_creatures = []
+        def draft():
+            if self.state.isInDraft():
+                action = Action()
+                action.pick(id=0)
+                self.bestTurn.actions.append(action)
+                self.drafted_cards.append(self.state.cards[0])
+                for card in self.drafted_cards:
+                    log("cost: {}".format(card.cost))
 
         def prepare():
+            self.my_creatures = []
+            self.enemy_creatures = []
             for card in self.state.cards:
                 if card.location == Mine:
-                    my_creatures.append(card)
+                    self.my_creatures.append(card)
                 elif card.location == Opponent:
-                    enemy_creatures.append(card)
+                    self.enemy_creatures.append(card)
 
         def think_summon():
-            log("Summon phase")
-
             my_mana = self.state.players[0].mana
             while my_mana > 0:
                 bestCard = None
@@ -260,9 +268,9 @@ class Agent:
                         continue
                     if card.cardType != Creature:  # summon only creatures
                         continue
-                    if card.cardType == GreenItem and len(my_creatures) == 0:
+                    if card.cardType == GreenItem and len(self.my_creatures) == 0:
                         continue
-                    if card.cardType == RedItem and len(enemy_creatures) == 0:
+                    if card.cardType == RedItem and len(self.enemy_creatures) == 0:
                         continue
                     if self.bestTurn.isCardPlayed(card.id): continue
 
@@ -275,21 +283,21 @@ class Agent:
                     break
                 else:
                     action = Action()
-                    if bestCard.cardType == Creature:
+                    if bestCard.cardType == Creature:  # Summon a creature
                         action.summon(id=bestCard.id)
-                    elif bestCard.cardType == GreenItem:
-                        targetCard = my_creatures[0]
+                        self.my_creatures.append(bestCard)
+                    elif bestCard.cardType == GreenItem:  # Use a green item
+                        targetCard = self.my_creatures[0]
                         action.use(id=bestCard.id, idTarget=targetCard.id)
-                    elif bestCard.cardType == RedItem:
-                        targetCard = enemy_creatures[0]
+                    elif bestCard.cardType == RedItem:  # Use a red item
+                        targetCard = self.enemy_creatures[0]
                         action.use(id=bestCard.id, idTarget=targetCard.id)
-                    elif bestCard.cardType == BlueItem:
+                    elif bestCard.cardType == BlueItem:  # Use a blue item
                         action.use(id=bestCard.id, idTarget=-1)
                     self.bestTurn.actions.append(action)
                     my_mana = my_mana - bestCard.cost
 
         def think_attack():
-            log("Attack phase")
             # Get all opponent's cards with Guard
             guards = []
             for card in self.state.cards:
@@ -316,6 +324,8 @@ class Agent:
                 self.bestTurn.actions.append(action)
 
         self.bestTurn.clear()
+
+        draft()
         prepare()
         think_summon()
         think_attack()
