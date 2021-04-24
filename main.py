@@ -23,6 +23,15 @@ BlueItem = 3
 
 MAX_MANA = 12
 
+LOW = 3
+MEDIUM = 6
+
+LOW_COUNT = 15
+MED_COUNT = 10
+HI_COUNT = 5
+
+CARDS_PER_DRAFT = 3
+
 
 class Card:
     def __init__(self):
@@ -156,6 +165,37 @@ class Turn:
                 self.actions[i].print()
 
 
+class ManaCurve:
+    def __init__(self):
+        self.curve = None
+        self.creature_count = None
+
+    def compute_curve(self, cards):
+        self.curve = [0 for _ in range(MAX_MANA + 1)]
+        self.creature_count = 0
+        for card in cards:
+            self.curve[card.cost] += 1
+            if card.cardType == Creature:
+                self.creature_count += 1
+
+    def evaluate_score(self):
+        """
+        Calculate the total score of the drafted cards depending on its mana cost
+        """
+        low_count, med_count, hi_count = 0, 0, 0
+
+        for i in range(LOW): low_count += self.curve[i]
+
+        for i in range(LOW, MEDIUM): med_count += self.curve[i]
+
+        for i in range(MEDIUM, MAX_MANA + 1): hi_count += self.curve[i]
+
+        return abs(low_count - LOW_COUNT) + abs(med_count - MED_COUNT) + abs(hi_count - HI_COUNT) + abs(self.creature_count - 27)
+
+    def print(self):
+        log(self.curve)
+
+
 class Agent:
     def __init__(self):
         self.state = State()
@@ -235,17 +275,30 @@ class Agent:
     def think(self):
         """ The Core part """
 
-        # my_creatures = []
-        # enemy_creatures = []
-
         def draft():
-            if self.state.isInDraft():
-                action = Action()
-                action.pick(id=0)
-                self.bestTurn.actions.append(action)
-                self.drafted_cards.append(self.state.cards[0])
-                for card in self.drafted_cards:
-                    log("cost: {}".format(card.cost))
+            curve = ManaCurve()
+            # compute the scores for the three choices
+            bestScore = float('inf')
+            bestPick = None
+            for i in range(CARDS_PER_DRAFT):
+                card = self.state.cards[i]
+                curve.compute_curve(self.drafted_cards)
+                curve.curve[card.cost] += 1
+                if card.cardType == Creature: curve.creature_count += 1
+
+                score = curve.evaluate_score()
+                curve.curve[card.cost] -= 1
+                if card.cardType == Creature: curve.creature_count -= 1
+
+                if score < bestScore:
+                    bestScore = score
+                    bestPick = i
+
+            action = Action()
+            action.pick(id=bestPick)
+            self.bestTurn.actions.append(action)
+            self.drafted_cards.append(self.state.cards[bestPick])
+            curve.print()
 
         def prepare():
             self.my_creatures = []
@@ -324,11 +377,12 @@ class Agent:
                 self.bestTurn.actions.append(action)
 
         self.bestTurn.clear()
-
-        draft()
-        prepare()
-        think_summon()
-        think_attack()
+        if self.state.isInDraft():
+            draft()
+        else:
+            prepare()
+            think_summon()
+            think_attack()
 
 
 if __name__ == '__main__':
