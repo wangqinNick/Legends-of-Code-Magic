@@ -28,12 +28,13 @@ MEDIUM = 6
 
 ZERO = 1
 ONE = 1
-TWO = 5
-THREE = 6
+TWO = 6
+THREE = 7
 FOUR = 7
 FIVE = 5
-SIX = 4
-SEVEN_PLUS = 3
+SIX = 3
+SEVEN_PLUS = 2
+CREATURE_NUM = 25
 
 CARDS_PER_DRAFT = 3
 
@@ -192,7 +193,7 @@ class ManaCurve:
         for i in range(7, MAX_MANA+1):
             seven_plus += self.curve[i]
 
-        return abs(self.curve[0] - ZERO) + abs(self.curve[1] - ONE) + abs(self.curve[2] - TWO) + abs(self.curve[3] - THREE) + abs(self.curve[4] - FOUR) + abs(self.curve[5] - FIVE) + abs(self.curve[6] - SIX) + abs(seven_plus - SEVEN_PLUS) + 6 * abs(self.creature_count - 27)
+        return abs(self.curve[0] - ZERO) + abs(self.curve[1] - ONE) + abs(self.curve[2] - TWO) + abs(self.curve[3] - THREE) + abs(self.curve[4] - FOUR) + abs(self.curve[5] - FIVE) + abs(self.curve[6] - SIX) + abs(seven_plus - SEVEN_PLUS) + 10 * abs(self.creature_count - CREATURE_NUM)
 
     def print(self):
         log(self.curve)
@@ -378,11 +379,17 @@ class Agent:
                     elif bestCard.cardType == GreenItem:  # Use a green item
                         if len(self.my_creatures) == 0: continue
                         targetCard = self.my_creatures[0]
+                        targetCard.attack += bestCard.attack
+                        targetCard.defense += bestCard.defense
                         action.use(id=bestCard.id, idTarget=targetCard.id)
 
                     elif bestCard.cardType == RedItem:  # Use a red item
                         if len(self.enemy_creatures) == 0: continue
                         targetCard = self.enemy_creatures[0]
+
+                        targetCard.attack -= bestCard.attack
+                        targetCard.defense -= bestCard.defense
+
                         action.use(id=bestCard.id, idTarget=targetCard.id)
 
                     elif bestCard.cardType == BlueItem:  # Use a blue item
@@ -405,6 +412,8 @@ class Agent:
                 if len(bestPairs) != 0:
                     for (my_card, enemy_card) in bestPairs:
                         self.attack(my_card.id, enemy_card.id)
+                        self.enemy_creatures.remove(enemy_card)
+                        self.enemy_non_guards.remove(enemy_card)
 
             def attackGuard():
                 for card in self.state.cards:
