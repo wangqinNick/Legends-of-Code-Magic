@@ -26,9 +26,14 @@ MAX_MANA = 12
 LOW = 3
 MEDIUM = 6
 
-LOW_COUNT = 15
-MED_COUNT = 10
-HI_COUNT = 5
+ZERO = 1
+ONE = 1
+TWO = 5
+THREE = 6
+FOUR = 7
+FIVE = 5
+SIX = 4
+SEVEN_PLUS = 3
 
 CARDS_PER_DRAFT = 3
 
@@ -183,16 +188,11 @@ class ManaCurve:
         """
         Calculate the total score of the drafted cards depending on its mana cost
         """
-        low_count, med_count, hi_count = 0, 0, 0
+        seven_plus = 0
+        for i in range(7, MAX_MANA+1):
+            seven_plus += self.curve[i]
 
-        for i in range(LOW): low_count += self.curve[i]
-
-        for i in range(LOW, MEDIUM): med_count += self.curve[i]
-
-        for i in range(MEDIUM, MAX_MANA + 1): hi_count += self.curve[i]
-
-        return abs(low_count - LOW_COUNT) + abs(med_count - MED_COUNT) + abs(hi_count - HI_COUNT) + abs(
-            self.creature_count - 27)
+        return abs(self.curve[0] - ZERO) + abs(self.curve[1] - ONE) + abs(self.curve[2] - TWO) + abs(self.curve[3] - THREE) + abs(self.curve[4] - FOUR) + abs(self.curve[5] - FIVE) + abs(self.curve[6] - SIX) + abs(seven_plus - SEVEN_PLUS) + 6 * abs(self.creature_count - 27)
 
     def print(self):
         log(self.curve)
@@ -354,18 +354,12 @@ class Agent:
                 bestCard = None
                 bestScore = -float('inf')
                 for card in self.state.cards:
-                    if card.location != InHand:
-                        continue
-                    if card.cost > my_mana:
-                        continue
-                    if card.cardType != Creature:  # summon only creatures
-                        continue
-                    if card.cardType == GreenItem and len(self.my_creatures) == 0:
-                        continue
-                    if card.cardType == RedItem and len(self.enemy_creatures) == 0:
-                        continue
+                    if card.location != InHand: continue
+                    if card.cost > my_mana: continue
+                    # if card.cardType != Creature: continue
+                    if card.cardType == GreenItem and len(self.my_creatures) == 0: continue
+                    if card.cardType == RedItem and len(self.enemy_creatures) == 0: continue
                     if self.bestTurn.isCardPlayed(card.id): continue
-
                     score = card.cost  # grade the cards scores directly based on its cost
                     if score > bestScore:
                         bestScore = score
@@ -377,17 +371,25 @@ class Agent:
                     action = Action()
                     if bestCard.cardType == Creature:  # Summon a creature
                         action.summon(id=bestCard.id)
+                        if not bestCard.charge:
+                            bestCard.used = True
                         self.my_creatures.append(bestCard)
+
                     elif bestCard.cardType == GreenItem:  # Use a green item
+                        if len(self.my_creatures) == 0: continue
                         targetCard = self.my_creatures[0]
                         action.use(id=bestCard.id, idTarget=targetCard.id)
+
                     elif bestCard.cardType == RedItem:  # Use a red item
+                        if len(self.enemy_creatures) == 0: continue
                         targetCard = self.enemy_creatures[0]
                         action.use(id=bestCard.id, idTarget=targetCard.id)
+
                     elif bestCard.cardType == BlueItem:  # Use a blue item
                         action.use(id=bestCard.id, idTarget=-1)
-                    self.bestTurn.actions.append(action)
+
                     my_mana = my_mana - bestCard.cost
+                    self.bestTurn.actions.append(action)
 
         def think_attack():
             def hitFace():
