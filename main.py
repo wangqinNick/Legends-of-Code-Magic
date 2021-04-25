@@ -1,5 +1,6 @@
 import sys
 from enum import Enum
+import copy
 
 """ for debugging """
 
@@ -12,10 +13,13 @@ def trap():
     exit(1)
 
 
+""" Card locations """
 Opponent = -1  # on the opponent's side of the board
 InHand = 0  # on the player's side of the board
 Mine = 1  # on the opponent's side of the board
+OutOfPlay = 2  # for simulation use only, represented used (wasted) cards
 
+""" Card Types """
 Creature = 0
 GreenItem = 1
 RedItem = 2
@@ -23,9 +27,9 @@ BlueItem = 3
 
 MAX_MANA = 12
 
-LOW = 3
-MEDIUM = 6
+CARDS_PER_DRAFT = 3
 
+""" Mana curve """
 ZERO = 1
 ONE = 1
 TWO = 6
@@ -36,12 +40,11 @@ SIX = 3
 SEVEN_PLUS = 2
 CREATURE_NUM = 25
 
-CARDS_PER_DRAFT = 3
-
 
 class Card:
     def __init__(self):
         self.id = None  # the identifier of a card
+        self.idx = None
         self.cardId = None  # the identifier representing the instance of the card (there can be multiple instances of the same card in a game).
         self.location = None  # 0: in the player's hand, 1: on the player's side of the board, -1: on the opponent's side of the board
         self.cardType = None
@@ -51,19 +54,35 @@ class Card:
         self.hpChange = None
         self.hpChangeEnemy = None
         self.cardDraw = None
-        self.abilities = None
+        # self.abilities = None
+
         self.breakthrough = False
         self.charge = False
         self.guard = False
+        self.drain = False
+        self.ward = False
+        self.lethal = False
+
+        self.canAttack = False
         self.used = False
 
+    def remove_ward(self):
+        self.ward = False
 
-'''
-class CardLocation(Enum):
-    Opponent = -1,  # on the opponent's side of the board
-    InHand = 0,  # on the player's side of the board
-    Mine = 1  # on the opponent's side of the board
-'''
+    def do_attack(self, card_target):
+        if self.lethal:
+            card_target.receive_damage(amount=1000)
+        else:
+            card_target.receive_damage(amount=self.attack)
+
+    def receive_damage(self, amount):
+        if amount <= 0: return
+        if self.ward:
+            self.remove_ward()
+            return
+        self.defense -= amount
+        if self.defense <= 0:
+            self.location = OutOfPlay
 
 
 class Player:
@@ -73,6 +92,8 @@ class Player:
         self.cardsRemaining = None
         self.rune = None
         self.draw = None
+
+        self.cards_drawn = 0  # Represented number of cards drawn with the turn
 
 
 class State:
@@ -85,6 +106,114 @@ class State:
 
     def isInDraft(self):
         return self.players[0].mana == 0
+
+    def update(self, turn, player_idx=0):
+        """
+        For simulation
+        """
+        my_player = copy.deepcopy(self.players[player_idx])
+        opponent = copy.deepcopy(self.players[1 - player_idx])
+
+        def apply_global_effects(card):
+            my_player.cards_drawn += card.cardDraw
+            my_player.mana -= card.cost
+            my_player.hp += card.hpChange
+            opponent.hp += card.hpChangeEnemy
+
+        def summon():
+            # Find the card summoned
+            card = self.cards[action.idx]
+            # Validity check
+            assert card.cost <= my_player.mana, log("Attempted to summon a card without enough mana")
+            assert card.cardType == Creature, log('Attempted to summon a non-creature card')
+            # Play the card onto the board
+            card.location = Mine if player_idx == 0 else Opponent
+            card.canAttack = card.charge  # Creature can attack once it has "Charge"
+
+            apply_global_effects(card)
+
+        def use():
+            card = self.cards[action.idx]
+            assert card.cost <= my_player.mana, log("Attempted to use a card without enough mana")
+            assert card.cardType != Creature, log("Attempted to use a creature card")
+
+            apply_global_effects(card)
+            card.location = OutOfPlay
+
+            if action.idxTarget != -1:
+                card_target = self.cards[action.idxTarget]
+
+                # Keyword changes
+                if card.cardType == GreenItem:
+                    card_target.abilities |= card.abilities
+                elif card.cardType == RedItem:
+                    card_target.abilities &= ~card.abilities
+
+                card_target.attack += card.attack
+
+                # Damage
+                # Check if the card is a damage and the target has Ward
+                if card.defense > 0:
+                    card_target.defence += card.defense
+                else:
+                    card_target.deal_damage(-card.defense)
+
+        def attack():
+            card = self.cards[action.idx]
+            assert card.location == (Mine if player_idx == 0 else Opponent), log(
+                "Attacking with an attacker that I do not control")
+            assert card.canAttack, log("Attacking with an attacker that cannot attack")
+
+            # Check for guards
+            found_guard = False
+            attacking_guard = False
+
+            for card_ in self.cards:
+                if card_.location != (Mine if Opponent else Mine): continue
+                if not card_.guard: continue
+                # There exits at least one guard
+                found_guard = True
+                if action.idxTarget == -1: log("Attempting attacking a player when there is a guard on board")
+                if card_.idx == action.idxTarget:
+                    attacking_guard = True
+
+            assert not (found_guard and not attacking_guard), log(
+                "Attempting attacking a creature when there is a guard on board")
+
+            if action.idxTarget == -1:  # Hit face
+                if card.attack > 0:
+                    opponent.hp -= card.attack
+            else:  # Hit creatures
+                card_target = self.cards[action.idxTarget]
+
+                # breakthrough
+                if card.brekthrough:
+                    if not card_target.ward:  # Breakthrough only when target is not Ward
+                        reminder = card.attack - card_target.defense
+                        if reminder >= 0: opponent.hp -= reminder
+
+                # Drain
+                if card_target.attack > 0:
+                    if not card.ward and card_target.drain:
+                        opponent.hp += card.attack  # Drain only if mine is not Ward
+
+                if card.attack > 0:
+                    if not card_target.ward and card.drain:
+                        my_player.hp += card.attack  # Drain only if target is not Ward
+
+                # Attack
+                card.do_attack(card_target)
+                card_target.do_attack(card)
+
+        for action in turn.actions:
+            if action.type == ActionType.Summon:  # Summon either a creature and an item
+                summon()
+
+            elif action.type == ActionType.Use:
+                use()
+
+            elif action.type == ActionType.Attack:
+                attack()
 
 
 class ActionType(Enum):
@@ -99,43 +228,53 @@ class ActionType(Enum):
 class Action:
     def __init__(self):
         self.type = ActionType.Pass
-        self.id = -1
-        self.idTarget = -1
+        self.idx = 0
+        self.idxTarget = 0
 
     """ helper functions """
 
     def pass_(self):
         self.type = ActionType.Pass
 
-    def summon(self, id):
+    def summon(self, idx):
         self.type = ActionType.Summon
-        self.id = id
+        self.idx = idx
 
-    def attack(self, id, idTarget=-1):
+    def attack(self, idx, idxTarget=-1):
         self.type = ActionType.Attack
-        self.id = id
-        self.idTarget = idTarget
+        self.idx = idx
+        self.idxTarget = idxTarget
 
-    def pick(self, id):
+    def pick(self, idx):
         self.type = ActionType.Pick
-        self.id = id
+        self.idx = idx
 
-    def use(self, id, idTarget):
+    def use(self, idx, idxTarget=-1):
         self.type = ActionType.Use
-        self.id = id
-        self.idTarget = idTarget
+        self.idx = idx
+        self.idxTarget = idxTarget
 
-    def print(self, ending="; "):
+    def print(self, state, ending="; "):
         if self.type == ActionType.Pass:
             print("PASS")
         elif self.type == ActionType.Summon:
-            print("SUMMON {}".format(self.id), end=ending)
+            card = state.cards[self.idx]
+            print("SUMMON {}".format(card.id), end=ending)
+
         elif self.type == ActionType.Attack:
-            print("ATTACK {0} {1}".format(self.id, self.idTarget), end=ending)
+            card = state.cards[self.idx]
+            card_target = state.cards[self.idxTarget]
+            print("ATTACK {0} {1}".format(card.id, card_target.id), end=ending)
+
         elif self.type == ActionType.Pick:
-            print("PICK {}".format(self.id), end=ending)
+            card = state.cards[self.idx]
+            print("PICK {}".format(card.id), end=ending)
+
         elif self.type == ActionType.Use:
-            print("USE {0} {1}".format(self.id, self.idTarget), end=ending)
+            card = state.cards[self.idx]
+            card_target = state.cards[self.idxTarget]
+            print("USE {0} {1}".format(card.id, card_target.id), end=ending)
+
         else:
             log("Action not found: {}".format(self.type))
             trap()
@@ -150,26 +289,26 @@ class Turn:
     def newAction(self):
         self.actions = []
 
-    def isCardPlayed(self, id):
+    def isCardPlayed(self, idx):
         for action in self.actions:
             if not (action.type == ActionType.Summon or action.type == ActionType.Use): continue
-            if action.id == id:
+            if action.idx == idx:
                 return True
         return False
 
     def clear(self):
         self.actions.clear()
 
-    def print(self):
+    def print(self, state):
         if len(self.actions) == 0:
             print("PASS")
             return
 
         for i in range(len(self.actions)):
             if i == len(self.actions) - 1:
-                self.actions[i].print(ending='\n')
+                self.actions[i].print(state, ending='\n')
             else:
-                self.actions[i].print()
+                self.actions[i].print(state)
 
 
 class ManaCurve:
@@ -190,10 +329,12 @@ class ManaCurve:
         Calculate the total score of the drafted cards depending on its mana cost
         """
         seven_plus = 0
-        for i in range(7, MAX_MANA+1):
+        for i in range(7, MAX_MANA + 1):
             seven_plus += self.curve[i]
 
-        return abs(self.curve[0] - ZERO) + abs(self.curve[1] - ONE) + abs(self.curve[2] - TWO) + abs(self.curve[3] - THREE) + abs(self.curve[4] - FOUR) + abs(self.curve[5] - FIVE) + abs(self.curve[6] - SIX) + abs(seven_plus - SEVEN_PLUS) + 10 * abs(self.creature_count - CREATURE_NUM)
+        return abs(self.curve[0] - ZERO) + abs(self.curve[1] - ONE) + abs(self.curve[2] - TWO) + abs(
+            self.curve[3] - THREE) + abs(self.curve[4] - FOUR) + abs(self.curve[5] - FIVE) + abs(
+            self.curve[6] - SIX) + abs(seven_plus - SEVEN_PLUS) + 10 * abs(self.creature_count - CREATURE_NUM)
 
     def print(self):
         log(self.curve)
@@ -218,16 +359,16 @@ class Agent:
     def attack(self, id, idTarget=None):
         action = Action()
         if idTarget is None:
-            action.attack(id=id)
+            action.attack(idx=id)
         else:
-            action.attack(id=id, idTarget=idTarget)
+            action.attack(idx=id, idxTarget=idTarget)
         self.bestTurn.actions.append(action)
 
     def print(self):
         """
         print the bestTurn (best actions found)
         """
-        self.bestTurn.print()
+        self.bestTurn.print(self.state)
 
     def findBestPair(self):
         bestPairs = []
@@ -269,7 +410,7 @@ class Agent:
         # read every card
         for i in range(card_count):
             card = Card()
-
+            card.idx = i
             inputs = input().split()
             card_number = int(inputs[0])
             instance_id = int(inputs[1])
@@ -280,7 +421,6 @@ class Agent:
             defense = int(inputs[6])
             abilities = inputs[
                 7]  # the abilities of a card. Each letter representing an ability (B for Breakthrough, C for Charge and G for Guard)
-            # log("Abilities: {}".format(abilities))
             my_health_change = int(inputs[8])
             opponent_health_change = int(inputs[9])
             card_draw = int(inputs[10])
@@ -292,7 +432,6 @@ class Agent:
             card.cost = cost
             card.attack = attack
             card.defense = defense
-            card.abilities = abilities
             card.hpChange = my_health_change
             card.hpChangeEnemy = opponent_health_change
             card.cardDraw = card_draw
@@ -302,157 +441,45 @@ class Agent:
                 if c == 'B': card.breakthrough = True
                 if c == 'C': card.charge = True
                 if c == 'G': card.guard = True
+                if c == 'D': card.drain = True
+                if c == 'W': card.ward = True
+                if c == 'L': card.lethal = True
+
+            card.canAttack = False if card.location == InHand else True
 
             self.state.cards.append(card)
 
-    def think(self):
-        """ The Core part """
+    def advanced_think(self):
 
-        def draft():
-            curve = ManaCurve()
-            # compute the scores for the three choices
-            bestScore = float('inf')
-            bestPick = None
-            for i in range(CARDS_PER_DRAFT):
-                card = self.state.cards[i]
-                curve.compute_curve(self.drafted_cards)
-                curve.curve[card.cost] += 1
-                if card.cardType == Creature: curve.creature_count += 1
+        def evaluate_state(state_):
+            return 0
 
-                score = curve.evaluate_score()
-                curve.curve[card.cost] -= 1
-                if card.cardType == Creature: curve.creature_count -= 1
+        state = copy.deepcopy(self.state)
+        best_score = -float('inf')
+        best_turn = []
+        for _ in range(10):
+            # Generate a random turn
+            random_turn = Turn()
 
-                if score < bestScore:
-                    bestScore = score
-                    bestPick = i
+            # Make a copy of the state -> new_state
+            new_state = copy.deepcopy(state)
 
-            action = Action()
-            action.pick(id=bestPick)
-            self.bestTurn.actions.append(action)
-            self.drafted_cards.append(self.state.cards[bestPick])
-            curve.print()
+            # Use that turn to update the new_state
+            new_state.update(random_turn, player_idx=0)
 
-        def prepare():
-            """
-            Classify all cards
-            """
-            self.reset()
+            # Evaluate the new_state
+            score = evaluate_state(new_state)
 
-            for card in self.state.cards:
-                if card.location == Mine:
-                    self.my_creatures.append(card)
-                elif card.location == Opponent:
-                    self.enemy_creatures.append(card)
-                    if card.guard:
-                        self.enemy_guards.append(card)
-                    else:
-                        self.enemy_non_guards.append(card)
-
-        def think_summon():
-            my_mana = self.state.players[0].mana
-            while my_mana > 0:
-                bestCard = None
-                bestScore = -float('inf')
-                for card in self.state.cards:
-                    if card.location != InHand: continue
-                    if card.cost > my_mana: continue
-                    # if card.cardType != Creature: continue
-                    if card.cardType == GreenItem and len(self.my_creatures) == 0: continue
-                    if card.cardType == RedItem and len(self.enemy_creatures) == 0: continue
-                    if self.bestTurn.isCardPlayed(card.id): continue
-                    score = card.cost  # grade the cards scores directly based on its cost
-                    if score > bestScore:
-                        bestScore = score
-                        bestCard = card
-
-                if bestCard is None:
-                    break
-                else:
-                    action = Action()
-                    if bestCard.cardType == Creature:  # Summon a creature
-                        action.summon(id=bestCard.id)
-                        if not bestCard.charge:
-                            bestCard.used = True
-                        self.my_creatures.append(bestCard)
-
-                    elif bestCard.cardType == GreenItem:  # Use a green item
-                        if len(self.my_creatures) == 0: continue
-                        targetCard = self.my_creatures[0]
-                        targetCard.attack += bestCard.attack
-                        targetCard.defense += bestCard.defense
-                        action.use(id=bestCard.id, idTarget=targetCard.id)
-
-                    elif bestCard.cardType == RedItem:  # Use a red item
-                        if len(self.enemy_creatures) == 0: continue
-                        targetCard = self.enemy_creatures[0]
-
-                        targetCard.attack -= bestCard.attack
-                        targetCard.defense -= bestCard.defense
-
-                        action.use(id=bestCard.id, idTarget=targetCard.id)
-
-                    elif bestCard.cardType == BlueItem:  # Use a blue item
-                        action.use(id=bestCard.id, idTarget=-1)
-
-                    my_mana = my_mana - bestCard.cost
-                    self.bestTurn.actions.append(action)
-
-        def think_attack():
-            def hitFace():
-                for card in self.state.cards:
-                    if card.location != Mine: continue
-                    if card.used: continue
-                    if len(self.enemy_guards) == 0:
-                        self.attack(id=card.id)  # hit face
-                        card.used = True
-
-            def trade():
-                bestPairs = self.findBestPair()
-                if len(bestPairs) != 0:
-                    for (my_card, enemy_card) in bestPairs:
-                        self.attack(my_card.id, enemy_card.id)
-                        self.enemy_creatures.remove(enemy_card)
-                        self.enemy_non_guards.remove(enemy_card)
-
-            def attackGuard():
-                for card in self.state.cards:
-                    if len(self.enemy_guards) == 0: break
-                    if card.location != Mine: continue
-                    if card.used: continue
-                    guard = self.enemy_guards[0]
-                    self.attack(id=card.id, idTarget=guard.id)
-                    card.used = True
-                    guard.defense = guard.defense - card.attack
-                    if guard.defense <= 0:
-                        self.enemy_guards.remove(guard)
-
-            def can_win():
-                total_attack = 0
-                for mine in self.my_creatures:
-                    if mine.used: continue
-                    total_attack += mine.attack
-                return total_attack >= self.state.players[1].hp
-
-            attackGuard()
-            if can_win():
-                hitFace()
-            else:
-                trade()
-                hitFace()
-
-        self.bestTurn.clear()
-        if self.state.isInDraft():
-            draft()
-        else:
-            prepare()
-            think_summon()
-            think_attack()
+            # If the score is better, keep that run
+            if score > best_score:
+                best_score = score
+                best_turn = random_turn
+        self.bestTurn = best_turn
 
 
 if __name__ == '__main__':
     agent = Agent()
     while True:
         agent.read()
-        agent.think()
+        agent.advanced_think()
         agent.print()
