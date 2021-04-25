@@ -49,6 +49,7 @@ class Card:
         self.breakthrough = False
         self.charge = False
         self.guard = False
+        self.used = False
 
 
 '''
@@ -190,7 +191,8 @@ class ManaCurve:
 
         for i in range(MEDIUM, MAX_MANA + 1): hi_count += self.curve[i]
 
-        return abs(low_count - LOW_COUNT) + abs(med_count - MED_COUNT) + abs(hi_count - HI_COUNT) + abs(self.creature_count - 27)
+        return abs(low_count - LOW_COUNT) + abs(med_count - MED_COUNT) + abs(hi_count - HI_COUNT) + abs(
+            self.creature_count - 27)
 
     def print(self):
         log(self.curve)
@@ -203,12 +205,42 @@ class Agent:
         self.drafted_cards = []
         self.my_creatures = []
         self.enemy_creatures = []
+        self.enemy_guards = []
+        self.enemy_non_guards = []
+
+    def reset(self):
+        self.my_creatures.clear()
+        self.enemy_creatures.clear()
+        self.enemy_guards.clear()
+        self.enemy_non_guards.clear()
+
+    def attack(self, id, idTarget=None):
+        action = Action()
+        if idTarget is None:
+            action.attack(id=id)
+        else:
+            action.attack(id=id, idTarget=idTarget)
+        self.bestTurn.actions.append(action)
 
     def print(self):
         """
         print the bestTurn (best actions found)
         """
         self.bestTurn.print()
+
+    def findBestPair(self):
+        bestPairs = []
+        if len(self.enemy_guards) != 0: return bestPairs  # if guard-enemy exists
+        for enemy in self.enemy_non_guards:
+            if enemy.used: continue  # if enemy card already in plan
+            for my_card in self.my_creatures:
+                if my_card.used: continue  # if my card already in plan
+                if my_card.attack >= enemy.defense and my_card.defense > enemy.attack:
+                    bestPairs.append((my_card, enemy))
+                    my_card.used = True
+                    enemy.used = True
+                    break
+        return bestPairs
 
     def read(self):
         """
@@ -231,7 +263,7 @@ class Agent:
             self.state.card_number_and_action_list.append(card_number_and_action)
 
         """ read cards info """
-        self.state.cards = []  # clear the card list every turn
+        self.state.cards.clear()  # clear the card list every turn
         card_count = int(input())
         # read every card
         for i in range(card_count):
@@ -301,13 +333,20 @@ class Agent:
             curve.print()
 
         def prepare():
-            self.my_creatures = []
-            self.enemy_creatures = []
+            """
+            Classify all cards
+            """
+            self.reset()
+
             for card in self.state.cards:
                 if card.location == Mine:
                     self.my_creatures.append(card)
                 elif card.location == Opponent:
                     self.enemy_creatures.append(card)
+                    if card.guard:
+                        self.enemy_guards.append(card)
+                    else:
+                        self.enemy_non_guards.append(card)
 
         def think_summon():
             my_mana = self.state.players[0].mana
@@ -351,30 +390,45 @@ class Agent:
                     my_mana = my_mana - bestCard.cost
 
         def think_attack():
-            # Get all opponent's cards with Guard
-            guards = []
-            for card in self.state.cards:
-                if card.location != Opponent: continue
-                if not card.guard: continue
-                guards.append(card)
+            def hitFace():
+                for card in self.state.cards:
+                    if card.location != Mine: continue
+                    if card.used: continue
+                    if len(self.enemy_guards) == 0:
+                        self.attack(id=card.id)  # hit face
+                        card.used = True
 
-            for card in self.state.cards:
-                if card.location != Mine: continue
-                # Attack the guards first
-                action = Action()
-                if len(guards) == 0:
-                    action.attack(id=card.id)
-                else:
-                    # Attack the first guard
-                    guard = guards[0]
-                    # Make the Attack
-                    action.attack(id=card.id, idTarget=guard.id)
-                    # Calculate the guard's defense after attacking
+            def trade():
+                bestPairs = self.findBestPair()
+                if len(bestPairs) != 0:
+                    for (my_card, enemy_card) in bestPairs:
+                        self.attack(my_card.id, enemy_card.id)
+
+            def attackGuard():
+                for card in self.state.cards:
+                    if len(self.enemy_guards) == 0: break
+                    if card.location != Mine: continue
+                    if card.used: continue
+                    guard = self.enemy_guards[0]
+                    self.attack(id=card.id, idTarget=guard.id)
+                    card.used = True
                     guard.defense = guard.defense - card.attack
-                    if guard.defense < 0:
-                        guards.remove(guard)
+                    if guard.defense <= 0:
+                        self.enemy_guards.remove(guard)
 
-                self.bestTurn.actions.append(action)
+            def can_win():
+                total_attack = 0
+                for mine in self.my_creatures:
+                    if mine.used: continue
+                    total_attack += mine.attack
+                return total_attack >= self.state.players[1].hp
+
+            attackGuard()
+            if can_win():
+                hitFace()
+            else:
+                trade()
+                hitFace()
 
         self.bestTurn.clear()
         if self.state.isInDraft():
