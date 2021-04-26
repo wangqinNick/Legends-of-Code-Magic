@@ -77,11 +77,11 @@ MAX_SPAN_SECONDS = 0.10
 """ Mana curve """
 ZERO = 1
 ONE = 1
-TWO = 6
-THREE = 7
+TWO = 7
+THREE = 8
 FOUR = 7
-FIVE = 5
-SIX = 3
+FIVE = 4
+SIX = 2
 SEVEN_PLUS = 2
 CREATURE_NUM = 25
 
@@ -405,7 +405,7 @@ class Action:
         self.idx = idx
         self.idxTarget = idxTarget
 
-    def pick(self, idx):
+    def pick(self, idx=0):
         self.type = ActionType.Pick
         self.idx = idx
 
@@ -431,8 +431,7 @@ class Action:
                 print("ATTACK {0} {1}".format(card.id, card_target.id), end=ending)
 
         elif self.type == ActionType.Pick:
-            card = state.cards[self.idx]
-            print("PICK {}".format(card.id), end=ending)
+            print("PICK {}".format(self.idx), end=ending)
 
         elif self.type == ActionType.Use:
             card = state.cards[self.idx]
@@ -520,6 +519,8 @@ class Agent:
         self.rnd = Random()
 
         self.timeout = Timeout()
+
+        self.draft_turns = 0
 
     def reset(self):
         self.my_creatures.clear()
@@ -650,16 +651,81 @@ class Agent:
                 opponent_creatures_score += creature.attack
                 opponent_creatures_score += creature.defense
 
-        creatures_score = (my_creatures_score - opponent_creatures_score)
-        overall_score = creatures_score + hp_score
+        my_creatures_score *= 0.1
+        opponent_creatures_score *= 0.1
+
+        overall_score = hp_score + my_creatures_score - opponent_creatures_score - state.players[0].mana * 5
+
         return overall_score
+
+    def draft(self):
+        curve = ManaCurve()
+        # compute the scores for the three choices
+        bestScore = float('inf')
+        bestPick = None
+        for i in range(CARDS_PER_DRAFT):
+            card = self.state.cards[i]
+            curve.compute_curve(self.drafted_cards)
+            curve.curve[card.cost] += 1
+            if card.cardType == Creature: curve.creature_count += 1
+
+            score = curve.evaluate_score()
+            curve.curve[card.cost] -= 1
+            if card.cardType == Creature: curve.creature_count -= 1
+
+            if score < bestScore:
+                bestScore = score
+                bestPick = i
+
+        action = Action()
+        action.pick(idx=bestPick)
+        self.bestTurn.actions.append(action)
+        self.drafted_cards.append(self.state.cards[bestPick])
+        self.draft_turns += 1
+        curve.print()
+
+    def draft_by_card(self):
+
+        self.bestTurn.clear()
+
+        bestScore = -float('inf')
+        bestPick = None
+        for i in range(CARDS_PER_DRAFT):
+            card = self.state.cards[i]
+
+            if card.cardType == Creature:
+                card_score = card.attack + card.defense - card.cost * 2
+
+                if card.ward:
+                    card_score += 1.5
+                if card.drain:
+                    card_score += 1.05
+                if card.lethal:
+                    card_score += 1.3
+                if card.guard:
+                    card_score += 1.15
+            else:
+                card_score = 0
+
+            if card_score > bestScore:
+                bestPick = i
+                bestScore = card_score
+
+        action = Action()
+        action.pick(idx=bestPick)
+        self.bestTurn.actions.append(action)
+        self.drafted_cards.append(self.state.cards[bestPick])
+        self.draft_turns += 1
 
     def advanced_think(self):
 
         self.bestTurn.clear()
 
         if self.state.isInDraft():
-            pass
+            if self.draft_turns <= 20:
+                self.draft_by_card()
+            else:
+                self.draft()
         else:
 
             best_score = -float('inf')
@@ -669,15 +735,16 @@ class Agent:
                 new_state = self.state
                 turn = Turn()
                 while True:
+
                     action = self.getRandomAction(copy.deepcopy(new_state))
 
                     if action is None:
                         break
-                    log("RESULT: {} {} {}".format(action.type, self.state.cards[action.idx].id,
-                                                  self.state.cards[action.idxTarget].id))
+                    # log("RESULT: {} {} {}".format(action.type, self.state.cards[action.idx].id, self.state.cards[action.idxTarget].id))
 
                     turn.actions.append(action)
                     new_state.update_action(action=action, player_idx=0)
+
                 score = self.eval_score(new_state)
                 if score > best_score:
                     best_score = score
