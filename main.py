@@ -2,6 +2,7 @@ import sys
 from enum import Enum
 import copy
 import random
+import time
 
 """ for debugging """
 
@@ -32,6 +33,23 @@ class Random(object):
         Return a number between 0 and upper_bound
         """
         return random.randint(0, upper_bound)
+
+
+class Timeout:
+    def __init__(self):
+        self.start_time = None
+
+    def start(self):
+        self.start_time = time.time()
+
+    def is_elapsed(self, max_span_seconds):
+        """
+        max_span: (seconds)
+        """
+        time_span = time.time()
+        if time_span - self.start_time > max_span_seconds:
+            return True
+        return False
 
 
 """ Card locations """
@@ -275,9 +293,11 @@ class State:
             creature = self.cards[idxTarget]
             if creature.location == Mine: continue
             if creature.guard:
-                if action.idxTarget == OPPONENT_FACE: log("Attempting attacking a player when there is a guard on board")
+                if action.idxTarget == OPPONENT_FACE: log(
+                    "Attempting attacking a player when there is a guard on board")
 
-        assert not (found_guard and not attacking_guard), log("Attempting attacking a creature when there is a guard on board")
+        assert not (found_guard and not attacking_guard), log(
+            "Attempting attacking a creature when there is a guard on board")
 
         if action.idxTarget == OPPONENT_FACE:  # Hit face
             if card.attack > 0:
@@ -522,6 +542,8 @@ class Agent:
 
         self.rnd = Random()
 
+        self.timeout = Timeout()
+
     def reset(self):
         self.my_creatures.clear()
         self.enemy_creatures.clear()
@@ -540,20 +562,6 @@ class Agent:
         print the bestTurn (best actions found)
         """
         self.bestTurn.print(self.state)
-
-    def findBestPair(self):
-        bestPairs = []
-        if len(self.enemy_guards) != 0: return bestPairs  # if guard-enemy exists
-        for enemy in self.enemy_non_guards:
-            if enemy.used: continue  # if enemy card already in plan
-            for my_card in self.my_creatures:
-                if my_card.used: continue  # if my card already in plan
-                if my_card.attack >= enemy.defense and my_card.defense > enemy.attack:
-                    bestPairs.append((my_card, enemy))
-                    my_card.used = True
-                    enemy.used = True
-                    break
-        return bestPairs
 
     def read(self):
         """
@@ -629,54 +637,66 @@ class Agent:
 
             self.state.cards.append(card)
 
+        # Start the timeout after done reading
+        self.timeout.start()
+
+    def eval_score(self, state):
+        my_player = state.players[0]
+        opponent = state.players[1]
+
+        if my_player.hp <= 0: return -float('inf')
+        if opponent.hp <= 0: return float('inf')
+
+        hp_score = 0
+        hp_score += my_player.hp
+        hp_score -= opponent.hp
+
+        my_creatures_score = 0
+        opponent_creatures_score = 0
+
+        # Iterate through all creatures on the board
+        for creature in self.state.cards:
+            if creature.location == Mine:
+                my_creatures_score += creature.attack
+                my_creatures_score += creature.defense
+
+            elif creature.location == Opponent:
+                opponent_creatures_score += creature.attack
+                opponent_creatures_score += creature.defense
+
+        creatures_score = (my_creatures_score - opponent_creatures_score) * 0.1
+        overall_score = creatures_score + hp_score
+        return overall_score
+
     def advanced_think(self):
-
-        def evaluate_state(state_):
-            return 0
-
-        state = copy.deepcopy(self.state)
-        best_score = -float('inf')
-        best_turn = []
-        for _ in range(10):
-            # Generate a random turn
-            random_turn = Turn()
-
-            # Make a copy of the state -> new_state
-            new_state = copy.deepcopy(state)
-
-            # Use that turn to update the new_state
-            new_state.update(random_turn, player_idx=0)
-
-            # Evaluate the new_state
-            score = evaluate_state(new_state)
-
-            # If the score is better, keep that run
-            if score > best_score:
-                best_score = score
-                best_turn = random_turn
-        self.bestTurn = best_turn
-
-    def random_think(self):
 
         self.bestTurn.clear()
 
         if self.state.isInDraft():
             pass
         else:
-            new_state = copy.deepcopy(self.state)
-            while True:
-                action = self.getRandomAction(new_state)
-                if action is None:
-                    return
-                # When have legal action
-                # log("{} {} {}".format(action.type, self.state.cards[action.idx].id, action.idxTarget))
-                self.bestTurn.actions.append(action)
-                new_state.update_action(action=action, player_idx=0)
+
+            best_score = -float('inf')
+            self.bestTurn.clear()
+
+            while not self.timeout.is_elapsed(0.040):
+                new_state = copy.deepcopy(self.state)
+                turn = Turn()
+                while True:
+                    action = self.getRandomAction(new_state)
+                    if action is None:
+                        break
+                    turn.actions.append(action)
+                    new_state.update_action(action=action, player_idx=0)
+                score = self.eval_score(new_state)
+                if score > best_score:
+                    best_score = score
+                    self.bestTurn = turn
 
 
 if __name__ == '__main__':
     agent = Agent()
     while True:
         agent.read()
-        agent.random_think()
+        agent.advanced_think()
         agent.print()
