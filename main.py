@@ -72,6 +72,8 @@ MAX_CREATURES_IN_PLAY = 6
 
 OPPONENT_FACE = -1
 
+MAX_SPAN_SECONDS = 0.10
+
 """ Mana curve """
 ZERO = 1
 ONE = 1
@@ -151,6 +153,8 @@ class State:
         self.my_creatures_idxs = []
         self.opponent_creatures_idxs = []
 
+        self.legal_actions = []
+
     def isInDraft(self):
         return self.players[0].mana == 0
 
@@ -164,71 +168,64 @@ class State:
             For debugging only
             """
             log("My Creatures:")
-            for idx in my_creatures_idxs:
+            for idx in self.my_creatures_idxs:
                 log(self.cards[idx].id)
 
             log("------")
             log("Opponent Creatures:")
-            for idx in opponent_creatures_idxs:
+            for idx in self.opponent_creatures_idxs:
                 log(self.cards[idx].id)
 
-        my_player = copy.deepcopy(self.players[0])
-        my_creatures_idxs = copy.deepcopy(self.my_creatures_idxs)
-        opponent_creatures_idxs = copy.deepcopy(self.opponent_creatures_idxs)
-        actions = []
+        my_player = self.players[0]
+
+        self.legal_actions.clear()
 
         # debug_creatures_idxs()
 
         for card in self.cards:
             # Playing the cards in my hand
             if card.location == InHand:
-                if card.cost > my_player.mana: continue
+                if card.cost <= my_player.mana:
 
-                if card.cardType == Creature:  # Check if can summon
-                    if len(my_creatures_idxs) >= MAX_CREATURES_IN_PLAY: continue
-                    action = Action()
-                    action.summon(card.idx)
-                    # Update
-                    # my_creatures_idxs.append(card.idx)
-                    # my_player.mana -= card.cost
-                    actions.append(action)
-
-                else:
-                    # Blue item
-                    if card.cardType == BlueItem:
+                    if card.cardType == Creature:  # Check if can summon
+                        if len(self.my_creatures_idxs) >= MAX_CREATURES_IN_PLAY: continue
                         action = Action()
-                        action.use(idx=card.idx, idxTarget=OPPONENT_FACE)
+                        action.summon(card.idx)
+                        self.legal_actions.append(action)
 
-                        # my_player.mana -= card.cost
-                        actions.append(action)
-
-                    elif card.cardType == RedItem:
-                        # Red item
-                        for creature_idx in opponent_creatures_idxs:
-                            # Red target opponent creature only
-                            if self.cards[creature_idx].location == Mine or self.cards[
-                                creature_idx].location == InHand: continue
-                            action = Action()
-                            action.use(idx=card.idx, idxTarget=creature_idx)
-                            # my_player.mana -= card.cost
-                            actions.append(action)
                     else:
-                        # Green item
-                        for creature_idx in my_creatures_idxs:
-                            # Green target my creature only
-                            if self.cards[creature_idx].location == Opponent or self.cards[
-                                creature_idx].location == InHand: continue
+                        # Blue item
+                        if card.cardType == BlueItem:
                             action = Action()
-                            action.use(idx=card.idx, idxTarget=creature_idx)
-                            # my_player.mana -= card.cost
-                            actions.append(action)
+                            action.use(idx=card.idx, idxTarget=OPPONENT_FACE)
+                            self.legal_actions.append(action)
+
+                        elif card.cardType == RedItem:
+                            # Red item
+                            for creature_idx in self.opponent_creatures_idxs:
+                                # Red target opponent creature only
+                                if self.cards[creature_idx].location == Mine or self.cards[
+                                    creature_idx].location == InHand: continue
+                                action = Action()
+                                action.use(idx=card.idx, idxTarget=creature_idx)
+                                self.legal_actions.append(action)
+
+                        else:
+                            # Green item
+                            for creature_idx in self.my_creatures_idxs:
+                                # Green target my creature only
+                                if self.cards[creature_idx].location == Opponent or self.cards[
+                                    creature_idx].location == InHand: continue
+                                action = Action()
+                                action.use(idx=card.idx, idxTarget=creature_idx)
+                                self.legal_actions.append(action)
 
             # Playing the cards on the board
             elif card.location == Mine and card.canAttack:
 
                 # Find attacking target
                 found_guard = False
-                for creature_idx in opponent_creatures_idxs:
+                for creature_idx in self.opponent_creatures_idxs:
                     creature = self.cards[creature_idx]
                     if creature.location == Mine: continue
                     if creature.guard:
@@ -236,27 +233,23 @@ class State:
                         found_guard = True
                         action = Action()
                         action.attack(idx=card.idx, idxTarget=creature_idx)
-                        actions.append(action)
-                        card.canAttack = False
+                        self.legal_actions.append(action)
 
                 if not found_guard:
+                    # Attack the player
+                    action_ = Action()
+                    action_.attack(idx=card.idx)
+                    self.legal_actions.append(action_)
 
                     # Attack any of opponent creatures
-                    for creature_idx in opponent_creatures_idxs:
-                        # creature = self.cards[creature_idx]
-                        if self.cards[creature_idx].location == Mine: continue
+                    for creature_idx_ in self.opponent_creatures_idxs:
                         action = Action()
-                        action.attack(idx=card.idx, idxTarget=creature_idx)
-                        actions.append(action)
-                        card.canAttack = False
+                        action.attack(idx=card.idx, idxTarget=creature_idx_)
+                        self.legal_actions.append(action)
 
-                    # Attack the player
-                    action = Action()
-                    action.attack(idx=card.idx)
-                    actions.append(action)
-                    card.canAttack = False
-
-        return actions
+        for action in self.legal_actions:
+            log("CALCULATE: {} {} {}".format(action.type, self.cards[action.idx].id, self.cards[action.idxTarget].id))
+        return self.legal_actions
 
     @classmethod
     def apply_global_effects(cls, player, opponent, card):
@@ -283,8 +276,8 @@ class State:
         card = self.cards[action.idx]
         assert card.location == Mine, log(
             "Attacking with an attacker that I do not control")
-        # assert card.canAttack, log("Attacking with an attacker that cannot attack")
         if not card.canAttack: return
+
         # Check for guards
         found_guard = False
         attacking_guard = False
@@ -299,6 +292,7 @@ class State:
         assert not (found_guard and not attacking_guard), log(
             "Attempting attacking a creature when there is a guard on board")
 
+        card.canAttack = False
         if action.idxTarget == OPPONENT_FACE:  # Hit face
             if card.attack > 0:
                 opponent.hp -= card.attack
@@ -380,23 +374,6 @@ class State:
 
         elif action.type == ActionType.Attack:
             self.attack(my_player=my_player, opponent=opponent, action=action, player_idx=player_idx)
-
-    def update(self, turn, player_idx=0):
-        """
-        For simulation one turn
-        """
-        my_player = copy.deepcopy(self.players[player_idx])
-        opponent = copy.deepcopy(self.players[1 - player_idx])
-
-        for action in turn.actions:
-            if action.type == ActionType.Summon:  # Summon either a creature and an item
-                self.summon(my_player=my_player, player_idx=player_idx, action=action, opponent=opponent)
-
-            elif action.type == ActionType.Use:
-                self.use(my_player=my_player, opponent=opponent, action=action)
-
-            elif action.type == ActionType.Attack:
-                self.attack(my_player=my_player, opponent=opponent, action=action, player_idx=player_idx)
 
 
 class ActionType(Enum):
@@ -628,7 +605,10 @@ class Agent:
                 if c == 'W': card.ward = True
                 if c == 'L': card.lethal = True
 
-            card.canAttack = False if card.location == InHand else True
+            if card.location == Mine or card.location == Opponent:
+                card.canAttack = True
+            else:
+                card.canAttack = False
 
             if card.cardType == Creature and card.location == Mine:
                 self.state.my_creatures_idxs.append(card.idx)
@@ -639,6 +619,12 @@ class Agent:
 
         # Start the timeout after done reading
         self.timeout.start()
+
+    def debug(self):
+        log("My Creatures: ")
+        for creature in self.state.cards:
+            if creature.location == Mine:
+                log("att: {}, def: {}, canAttack:{}".format(creature.attack, creature.defense, creature.canAttack))
 
     def eval_score(self, state):
         my_player = state.players[0]
@@ -664,7 +650,7 @@ class Agent:
                 opponent_creatures_score += creature.attack
                 opponent_creatures_score += creature.defense
 
-        creatures_score = (my_creatures_score - opponent_creatures_score) * 0.1
+        creatures_score = (my_creatures_score - opponent_creatures_score)
         overall_score = creatures_score + hp_score
         return overall_score
 
@@ -679,13 +665,17 @@ class Agent:
             best_score = -float('inf')
             self.bestTurn.clear()
 
-            while not self.timeout.is_elapsed(0.040):
-                new_state = copy.deepcopy(self.state)
+            while not self.timeout.is_elapsed(MAX_SPAN_SECONDS):
+                new_state = self.state
                 turn = Turn()
                 while True:
-                    action = self.getRandomAction(new_state)
+                    action = self.getRandomAction(copy.deepcopy(new_state))
+
                     if action is None:
                         break
+                    log("RESULT: {} {} {}".format(action.type, self.state.cards[action.idx].id,
+                                                  self.state.cards[action.idxTarget].id))
+
                     turn.actions.append(action)
                     new_state.update_action(action=action, player_idx=0)
                 score = self.eval_score(new_state)
@@ -698,5 +688,6 @@ if __name__ == '__main__':
     agent = Agent()
     while True:
         agent.read()
+        agent.debug()
         agent.advanced_think()
         agent.print()
