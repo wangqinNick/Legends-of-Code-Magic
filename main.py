@@ -52,6 +52,8 @@ CARDS_PER_DRAFT = 3
 
 MAX_CREATURES_IN_PLAY = 6
 
+OPPONENT_FACE = -1
+
 """ Mana curve """
 ZERO = 1
 ONE = 1
@@ -138,6 +140,7 @@ class State:
         """
         Generate a list of legal actions
         """
+
         def debug_creatures_idxs():
             """
             For debugging only
@@ -151,75 +154,90 @@ class State:
             for idx in opponent_creatures_idxs:
                 log(self.cards[idx].id)
 
-        my_player = copy.deepcopy(self.players[player_idx])
-        my_location = Mine if player_idx == 0 else Opponent
+        my_player = copy.deepcopy(self.players[0])
         my_creatures_idxs = copy.deepcopy(self.my_creatures_idxs)
         opponent_creatures_idxs = copy.deepcopy(self.opponent_creatures_idxs)
         actions = []
 
-        debug_creatures_idxs()
+        # debug_creatures_idxs()
 
         for card in self.cards:
             # Playing the cards in my hand
             if card.location == InHand:
                 if card.cost > my_player.mana: continue
+
                 if card.cardType == Creature:  # Check if can summon
                     if len(my_creatures_idxs) >= MAX_CREATURES_IN_PLAY: continue
                     action = Action()
                     action.summon(card.idx)
-                    my_creatures_idxs.append(card.idx)
+                    # Update
+                    # my_creatures_idxs.append(card.idx)
+                    # my_player.mana -= card.cost
                     actions.append(action)
 
                 else:
                     # Blue item
                     if card.cardType == BlueItem:
                         action = Action()
-                        action.use(idx=card.idx, idxTarget=-1)
+                        action.use(idx=card.idx, idxTarget=OPPONENT_FACE)
+
+                        # my_player.mana -= card.cost
                         actions.append(action)
 
                     elif card.cardType == RedItem:
                         # Red item
                         for creature_idx in opponent_creatures_idxs:
                             # Red target opponent creature only
-                            if self.cards[creature_idx].location == Mine or self.cards[creature_idx].location == InHand: continue
+                            if self.cards[creature_idx].location == Mine or self.cards[
+                                creature_idx].location == InHand: continue
                             action = Action()
                             action.use(idx=card.idx, idxTarget=creature_idx)
+                            # my_player.mana -= card.cost
                             actions.append(action)
                     else:
                         # Green item
                         for creature_idx in my_creatures_idxs:
                             # Green target my creature only
-                            if self.cards[creature_idx].location == Opponent or self.cards[creature_idx].location == InHand: continue
+                            if self.cards[creature_idx].location == Opponent or self.cards[
+                                creature_idx].location == InHand: continue
                             action = Action()
                             action.use(idx=card.idx, idxTarget=creature_idx)
+                            # my_player.mana -= card.cost
                             actions.append(action)
 
             # Playing the cards on the board
-            elif card.location == my_location and card.canAttack:
+            elif card.location == Mine and card.canAttack:
 
                 # Find attacking target
                 found_guard = False
                 for creature_idx in opponent_creatures_idxs:
                     creature = self.cards[creature_idx]
-                    if not creature.guard: continue
-                    # Attack any of guards
-                    found_guard = True
-                    action = Action()
-                    action.attack(idx=card.idx, idxTarget=creature_idx)
-                    actions.append(action)
+                    if creature.location == Mine: continue
+                    if creature.guard:
+                        # Attack any of guards
+                        found_guard = True
+                        action = Action()
+                        action.attack(idx=card.idx, idxTarget=creature_idx)
+                        actions.append(action)
+                        card.canAttack = False
+
                 if not found_guard:
 
                     # Attack any of opponent creatures
                     for creature_idx in opponent_creatures_idxs:
                         # creature = self.cards[creature_idx]
+                        if self.cards[creature_idx].location == Mine: continue
                         action = Action()
                         action.attack(idx=card.idx, idxTarget=creature_idx)
                         actions.append(action)
+                        card.canAttack = False
 
                     # Attack the player
                     action = Action()
-                    action.attack(idx=card.idx, idxTarget=-1)
+                    action.attack(idx=card.idx)
                     actions.append(action)
+                    card.canAttack = False
+
         return actions
 
     @classmethod
@@ -237,42 +255,38 @@ class State:
         assert card.cost <= my_player.mana, log("Attempted to summon a card without enough mana")
         assert card.cardType == Creature, log('Attempted to summon a non-creature card')
         # Play the card onto the board
-        card.location = Mine if player_idx == 0 else Opponent
+        card.location = Mine
         card.canAttack = card.charge  # Creature can attack once it has "Charge"
-
+        my_player.mana -= self.cards[action.idx].cost
         self.my_creatures_idxs.append(card.idx)
         self.apply_global_effects(card=card, player=my_player, opponent=opponent)
 
     def attack(self, my_player, opponent, action, player_idx):
         card = self.cards[action.idx]
-        assert card.location == (Mine if player_idx == 0 else Opponent), log(
+        assert card.location == Mine, log(
             "Attacking with an attacker that I do not control")
-        assert card.canAttack, log("Attacking with an attacker that cannot attack")
-
+        # assert card.canAttack, log("Attacking with an attacker that cannot attack")
+        if not card.canAttack: return
         # Check for guards
         found_guard = False
         attacking_guard = False
 
-        for card_ in self.cards:
-            if card_.location != (Mine if Opponent else Mine): continue
-            if not card_.guard: continue
-            # There exits at least one guard
-            found_guard = True
-            if action.idxTarget == -1: log("Attempting attacking a player when there is a guard on board")
-            if card_.idx == action.idxTarget:
-                attacking_guard = True
+        for idxTarget in self.opponent_creatures_idxs:
+            creature = self.cards[idxTarget]
+            if creature.location == Mine: continue
+            if creature.guard:
+                if action.idxTarget == OPPONENT_FACE: log("Attempting attacking a player when there is a guard on board")
 
-        assert not (found_guard and not attacking_guard), log(
-            "Attempting attacking a creature when there is a guard on board")
+        assert not (found_guard and not attacking_guard), log("Attempting attacking a creature when there is a guard on board")
 
-        if action.idxTarget == -1:  # Hit face
+        if action.idxTarget == OPPONENT_FACE:  # Hit face
             if card.attack > 0:
                 opponent.hp -= card.attack
         else:  # Hit creatures
             card_target = self.cards[action.idxTarget]
 
             # breakthrough
-            if card.brekthrough:
+            if card.breakthrough:
                 if not card_target.ward:  # Breakthrough only when target is not Ward
                     reminder = card.attack - card_target.defense
                     if reminder >= 0: opponent.hp -= reminder
@@ -300,32 +314,43 @@ class State:
 
         self.apply_global_effects(player=my_player, opponent=opponent, card=card)
         card.location = OutOfPlay
-
-        if action.idxTarget != -1:
+        my_player.mana -= self.cards[action.idx].cost
+        if action.idxTarget != OPPONENT_FACE:
             card_target = self.cards[action.idxTarget]
 
             # Keyword changes
             if card.cardType == GreenItem:
-                card_target.abilities |= card.abilities
+                card_target.breakthrough = card.breakthrough
+                card_target.drain = card.drain
+                card_target.ward = card.ward
+                card_target.guard = card.guard
+                card_target.lethal = card.lethal
+                card_target.charge = card.charge
+
             elif card.cardType == RedItem:
-                card_target.abilities &= ~card.abilities
+                if card.breakthrough: card_target.breakthrough = False
+                if card.ward: card_target.breakthrough = False
+                if card.guard: card_target.guard = False
+                if card.lethal: card_target.lethal = False
+                if card.charge: card_target.charge = False
+                if card.drain: card_target.drain = False
 
             card_target.attack += card.attack
 
             # Damage
             # Check if the card is a damage and the target has Ward
             if card.defense > 0:
-                card_target.defence += card.defense
+                card_target.defense += card.defense
             else:
-                opponent.receive_damage(card_target=card_target, amount=-card.defense)
+                opponent.receive_damage(card=card_target, amount=-card.defense)
                 if card_target.location == OutOfPlay: self.opponent_creatures_idxs.remove(card_target.idx)
 
     def update_action(self, action, player_idx=0):
         """
         For simulation one action
         """
-        my_player = copy.deepcopy(self.players[player_idx])
-        opponent = copy.deepcopy(self.players[1 - player_idx])
+        my_player = self.players[0]
+        opponent = self.players[1]
 
         if action.type == ActionType.Summon:  # Summon either a creature and an item
             self.summon(my_player=my_player, player_idx=player_idx, action=action, opponent=opponent)
@@ -378,7 +403,7 @@ class Action:
         self.type = ActionType.Summon
         self.idx = idx
 
-    def attack(self, idx, idxTarget=-1):
+    def attack(self, idx, idxTarget=OPPONENT_FACE):
         self.type = ActionType.Attack
         self.idx = idx
         self.idxTarget = idxTarget
@@ -387,7 +412,7 @@ class Action:
         self.type = ActionType.Pick
         self.idx = idx
 
-    def use(self, idx, idxTarget=-1):
+    def use(self, idx, idxTarget=OPPONENT_FACE):
         self.type = ActionType.Use
         self.idx = idx
         self.idxTarget = idxTarget
@@ -402,8 +427,8 @@ class Action:
 
         elif self.type == ActionType.Attack:
             card = state.cards[self.idx]
-            if self.idxTarget == -1:
-                print("ATTACK {0} {1}".format(card.id, -1), end=ending)
+            if self.idxTarget == OPPONENT_FACE:
+                print("ATTACK {0} {1}".format(card.id, OPPONENT_FACE), end=ending)
             else:
                 card_target = state.cards[self.idxTarget]
                 print("ATTACK {0} {1}".format(card.id, card_target.id), end=ending)
@@ -414,8 +439,8 @@ class Action:
 
         elif self.type == ActionType.Use:
             card = state.cards[self.idx]
-            if self.idxTarget == -1:
-                print("USE {0} {1}".format(card.id, -1), end=ending)
+            if self.idxTarget == OPPONENT_FACE:
+                print("USE {0} {1}".format(card.id, OPPONENT_FACE), end=ending)
             else:
                 card_target = state.cards[self.idxTarget]
                 print("USE {0} {1}".format(card.id, card_target.id), end=ending)
@@ -510,14 +535,6 @@ class Agent:
         action = actions[action_idx]
         return action
 
-    def attack(self, id, idTarget=None):
-        action = Action()
-        if idTarget is None:
-            action.attack(idx=id)
-        else:
-            action.attack(idx=id, idxTarget=idTarget)
-        self.bestTurn.actions.append(action)
-
     def print(self):
         """
         print the bestTurn (best actions found)
@@ -560,7 +577,7 @@ class Agent:
 
         """ read cards info """
         self.state.cards.clear()  # clear the card list every turn
-        
+
         self.state.my_creatures_idxs.clear()
         self.state.opponent_creatures_idxs.clear()
 
@@ -646,9 +663,15 @@ class Agent:
         if self.state.isInDraft():
             pass
         else:
-            action = self.getRandomAction(self.state)
-            if action is not None:
+            new_state = copy.deepcopy(self.state)
+            while True:
+                action = self.getRandomAction(new_state)
+                if action is None:
+                    return
+                # When have legal action
+                # log("{} {} {}".format(action.type, self.state.cards[action.idx].id, action.idxTarget))
                 self.bestTurn.actions.append(action)
+                new_state.update_action(action=action, player_idx=0)
 
 
 if __name__ == '__main__':
